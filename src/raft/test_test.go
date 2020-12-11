@@ -47,16 +47,28 @@ func TestReElection(t *testing.T) {
 
 	fmt.Printf("Test: election after network failure ...\n")
 
+	go func(rfs []*Raft, connected *[]bool) {
+		timer := time.NewTicker(time.Millisecond * 50)
+		for {
+			<-timer.C
+			fmt.Printf("   状态：[0]%s|%t, [1]%s|%t, [2]%s|%t   \n", rfs[0].Role, (*connected)[0],
+				rfs[1].Role, (*connected)[1], rfs[2].Role, (*connected)[2])
+		}
+	}(cfg.rafts, &cfg.connected)
+
 	leader1 := cfg.checkOneLeader()
+	fmt.Println("_________________________1_______________________________")
 
 	// if the leader disconnects, a new one should be elected.
 	cfg.disconnect(leader1)
 	cfg.checkOneLeader()
+	fmt.Println("_________________________2_______________________________")
 
 	// if the old leader rejoins, that shouldn't
 	// disturb the old leader.
 	cfg.connect(leader1)
 	leader2 := cfg.checkOneLeader()
+	fmt.Println("_________________________3_______________________________")
 
 	// if there's no quorum, no leader should
 	// be elected.
@@ -64,14 +76,17 @@ func TestReElection(t *testing.T) {
 	cfg.disconnect((leader2 + 1) % servers)
 	time.Sleep(2 * RaftElectionTimeout)
 	cfg.checkNoLeader()
+	fmt.Println("_________________________4_______________________________")
 
 	// if a quorum arises, it should elect a leader.
 	cfg.connect((leader2 + 1) % servers)
 	cfg.checkOneLeader()
+	fmt.Println("_________________________5_______________________________")
 
 	// re-join of last node shouldn't prevent leader from existing.
 	cfg.connect(leader2)
 	cfg.checkOneLeader()
+	fmt.Println("_________________________6_______________________________")
 
 	fmt.Printf("  ... Passed\n")
 }
@@ -628,11 +643,11 @@ func TestPersist3(t *testing.T) {
 //
 // Test the scenarios described in Figure 8 of the extended Raft paper. Each
 // iteration asks a leader, if there is one, to insert a command in the Raft
-// log.  If there is a leader, that leader will fail quickly with a high
+// PrintLog.  If there is a leader, that leader will fail quickly with a high
 // probability (perhaps without committing the command), or crash after a while
 // with low probability (most likey committing the command).  If the number of
 // alive servers isn't enough to form a majority, perhaps start a new server.
-// The leader in a new term may try to finish replicating log entries that
+// The leader in a new term may try to finish replicating PrintLog entries that
 // haven't been committed yet.
 //
 func TestFigure8(t *testing.T) {
