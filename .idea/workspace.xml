@@ -1,14 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="558ac743-39b1-4d9c-ab46-81873a9bc231" name="Default" comment="Part1">
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
+    <list default="true" id="558ac743-39b1-4d9c-ab46-81873a9bc231" name="Default" comment="Part2 FailNoAgree Concurrent Rejoin">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/labrpc/labrpc.go" beforeDir="false" afterPath="$PROJECT_DIR$/src/labrpc/labrpc.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/raft/config.go" beforeDir="false" afterPath="$PROJECT_DIR$/src/raft/config.go" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/raft/raft.go" beforeDir="false" afterPath="$PROJECT_DIR$/src/raft/raft.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/raft/test_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/src/raft/test_test.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/raft/util.go" beforeDir="false" afterPath="$PROJECT_DIR$/src/raft/util.go" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -199,7 +194,8 @@
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="Part1" />
-    <option name="LAST_COMMIT_MESSAGE" value="Part1" />
+    <MESSAGE value="Part2 FailNoAgree Concurrent Rejoin" />
+    <option name="LAST_COMMIT_MESSAGE" value="Part2 FailNoAgree Concurrent Rejoin" />
   </component>
   <component name="WindowStateProjectService">
     <state x="842" y="386" width="850" height="277" key="#Notifications" timestamp="1607947203153">
@@ -226,10 +222,10 @@
       <screen x="0" y="0" width="1920" height="1050" />
     </state>
     <state x="656" y="148" key="#go_build_raft.go/0.0.1920.1050@0.0.1920.1050" timestamp="1608038605198" />
-    <state x="558" y="89" key="CommitChangelistDialog2" timestamp="1607706191790">
+    <state x="558" y="89" key="CommitChangelistDialog2" timestamp="1608183610997">
       <screen x="0" y="0" width="1920" height="1050" />
     </state>
-    <state x="558" y="89" key="CommitChangelistDialog2/0.0.1920.1050@0.0.1920.1050" timestamp="1607706191790" />
+    <state x="558" y="89" key="CommitChangelistDialog2/0.0.1920.1050@0.0.1920.1050" timestamp="1608183610997" />
     <state x="721" y="267" width="687" height="509" key="EnvironmentVariablesDialog" timestamp="1608044998110">
       <screen x="0" y="0" width="1920" height="1050" />
     </state>
@@ -254,10 +250,10 @@
       <screen x="0" y="0" width="1920" height="1050" />
     </state>
     <state width="1877" height="352" key="GridCell.Tab.0.right/0.0.1920.1050@0.0.1920.1050" timestamp="1608050609058" />
-    <state x="552" y="257" key="Vcs.Push.Dialog.v2" timestamp="1607706194303">
+    <state x="552" y="257" key="Vcs.Push.Dialog.v2" timestamp="1608183614118">
       <screen x="0" y="0" width="1920" height="1050" />
     </state>
-    <state x="552" y="257" key="Vcs.Push.Dialog.v2/0.0.1920.1050@0.0.1920.1050" timestamp="1607706194303" />
+    <state x="552" y="257" key="Vcs.Push.Dialog.v2/0.0.1920.1050@0.0.1920.1050" timestamp="1608183614118" />
     <state x="853" y="259" key="com.intellij.tools.ToolSelectDialog.dimensionServiceKey" timestamp="1608038874903">
       <screen x="0" y="0" width="1920" height="1050" />
     </state>

@@ -277,14 +277,29 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	log := rf.Log[index]
 
 	canVote := false
-	rf.mu.Lock()
 	reply.Term = rf.CurrentTerm
-	if args.Term > rf.CurrentTerm {
+
+	if rf.Role == LEADER && args.Term > rf.CurrentTerm {
+		rf.mu.Lock()
+		rf.Role = FOLLOWER
+		rf.CurrentTerm = args.Term
+		rf.VotedFor = NoOneChoose
+		if rf.LeaderTicker != nil {
+			rf.LeaderTicker.Stop()
+		}
+		rf.mu.Unlock()
+	} else if args.Term > rf.CurrentTerm {
+		rf.mu.Lock()
 		// 如果竞选任期增加了，之前投的票也不算
 		rf.VotedFor = NoOneChoose
+		rf.CurrentTerm = args.Term
+		if rf.ctxCancelFunc != nil && (*rf.ctxCancelFunc) != nil {
+			(*rf.ctxCancelFunc)()
+		}
+		rf.mu.Unlock()
 	}
 	if (rf.Role == LEADER) ||
-		(args.Term <= rf.CurrentTerm) ||
+		(args.Term < rf.CurrentTerm) ||
 		(rf.VotedFor != NoOneChoose && rf.VotedFor != args.CandidateId) ||
 		(log.Term > args.LastLogTerm) ||
 		(log.Term == args.LastLogTerm && index > args.LastLogIndex) {
@@ -293,12 +308,13 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 			(log.Term > args.LastLogTerm), (log.Term == args.LastLogTerm && index > args.LastLogIndex))
 		canVote = false
 	} else {
+		rf.mu.Lock()
 		rf.VotedFor = args.CandidateId
 		canVote = true
-		rf.NormalHandler(args.Term)
+		rf.ResetRunVoteTicker()
+		rf.mu.Unlock()
 	}
 
-	rf.mu.Unlock()
 	reply.VoteGranted = canVote
 	return
 }
@@ -348,14 +364,14 @@ func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply)
 	reply.Term = rf.CurrentTerm
 	if args.Term < rf.CurrentTerm {
 		// 这里有个问题，当一个follower节点自闭久了自己把任期增加到很高，然后重新连接到集群后，就不会服从leader的管教，就会不停地竞选
-		if len(args.Entries) > 0 && args.PrevLogTerm > rf.Log[rf.GetLastIndex()].Term {
-			// 如果是由日志term的强行压制
-			rf.mu.Lock()
-			rf.Role = FOLLOWER
-			rf.CurrentTerm = args.Term
-			rf.StopTicker()
-			rf.mu.Unlock()
-		}
+		//if len(args.Entries) > 0 && args.PrevLogTerm > rf.Log[rf.GetLastIndex()].Term {
+		//	// 如果是由日志term的强行压制
+		//	rf.mu.Lock()
+		//	rf.Role = FOLLOWER
+		//	rf.CurrentTerm = args.Term
+		//	rf.StopTicker()
+		//	rf.mu.Unlock()
+		//}
 		reply.Success = false
 		return
 	}
