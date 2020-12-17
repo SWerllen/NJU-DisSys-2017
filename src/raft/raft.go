@@ -18,7 +18,9 @@ package raft
 //
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
 	"math"
 	"math/rand"
 	"sync"
@@ -125,7 +127,7 @@ func (rf *Raft) SetCommitIndex(isLocked bool, index int) int {
 	if !isLocked {
 		rf.mu.Lock()
 	}
-	if rf.CommitIndex < index && rf.Log[index].Term == rf.CurrentTerm {
+	if rf.CommitIndex < index {
 		rf.CommitIndex = index
 		if !isLocked {
 			rf.mu.Unlock()
@@ -162,6 +164,29 @@ func (rf *Raft) DecrementNextIndex(id int, preIndex int) {
 	rf.mu.Unlock()
 }
 
+func (rf *Raft) TryApply(locked bool, curIndex int) {
+	if !locked {
+		rf.mu.Lock()
+	}
+	if curIndex > rf.CommitIndex {
+		oldCommitIndex := rf.CommitIndex
+		targetIndex := int(math.Min(float64(curIndex), float64(rf.GetLastIndex())))
+		newCommitIndex := rf.SetCommitIndex(true, targetIndex)
+		DPrintf("%d[%d] targetIndex: %d, 尝试应用：[%d --> %d]", rf.me, rf.CurrentTerm, targetIndex, oldCommitIndex, newCommitIndex)
+		for i := oldCommitIndex + 1; i <= newCommitIndex; i++ {
+			//if rf.CurrentTerm != rf.Log[i].Term {
+			//	continue
+			//}
+			rf.Execute(i, rf.Log[i].Command)
+		}
+		rf.LastApplied = newCommitIndex
+	}
+	rf.persist()
+	if !locked {
+		rf.mu.Unlock()
+	}
+}
+
 func (rf *Raft) GetDeepCopy() Raft {
 	return Raft{
 		peers:         rf.peers,
@@ -189,12 +214,15 @@ func (rf *Raft) GetDeepCopy() Raft {
 func (rf *Raft) persist() {
 	// Your code here.
 	// Example:
-	//w := new(bytes.Buffer)
-	//e := gob.NewEncoder(w)
-	//e.Encode(rf.xxx)
-	//e.Encode(rf.yyy)
-	//data := w.Bytes()
-	//rf.persister.SaveRaftState(data)
+	//return
+	w := new(bytes.Buffer)
+	e := gob.NewEncoder(w)
+	//DPrintf("存储 %d[%d] 信息：Term[%d], VotedFor[%d], Log[%v]", rf.me, rf.CurrentTerm, rf.CurrentTerm, rf.VotedFor, rf.Log)
+	e.Encode(rf.CurrentTerm)
+	e.Encode(rf.VotedFor)
+	e.Encode(rf.Log)
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
 }
 
 //
@@ -203,10 +231,12 @@ func (rf *Raft) persist() {
 func (rf *Raft) readPersist(data []byte) {
 	// Your code here.
 	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := gob.NewDecoder(r)
-	// d.Decode(&rf.xxx)
-	// d.Decode(&rf.yyy)
+	r := bytes.NewBuffer(data)
+	d := gob.NewDecoder(r)
+	d.Decode(&rf.CurrentTerm)
+	d.Decode(&rf.VotedFor)
+	d.Decode(&rf.Log)
+	//DPrintf("解析 %d[%d] 信息：Term[%d], VotedFor[%d], Log[%v]", rf.me, rf.CurrentTerm, rf.CurrentTerm, rf.VotedFor, rf.Log)
 }
 
 //
@@ -273,9 +303,6 @@ func (rf *Raft) NormalHandler(messageTerm int) {
 func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	DPrintf("%d[%d] 收到来自 %d[%d] 的竞选消息\n", rf.me, rf.CurrentTerm, args.CandidateId, args.Term)
 
-	index := rf.CommitIndex
-	log := rf.Log[index]
-
 	canVote := false
 	reply.Term = rf.CurrentTerm
 
@@ -284,6 +311,9 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 		rf.Role = FOLLOWER
 		rf.CurrentTerm = args.Term
 		rf.VotedFor = NoOneChoose
+
+		rf.persist()
+
 		if rf.LeaderTicker != nil {
 			rf.LeaderTicker.Stop()
 		}
@@ -293,25 +323,33 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 		// 如果竞选任期增加了，之前投的票也不算
 		rf.VotedFor = NoOneChoose
 		rf.CurrentTerm = args.Term
+
+		rf.persist()
+
 		if rf.ctxCancelFunc != nil && (*rf.ctxCancelFunc) != nil {
 			(*rf.ctxCancelFunc)()
 		}
 		rf.mu.Unlock()
 	}
+
+	log := rf.Log[rf.GetLastIndex()]
 	if (rf.Role == LEADER) ||
 		(args.Term < rf.CurrentTerm) ||
 		(rf.VotedFor != NoOneChoose && rf.VotedFor != args.CandidateId) ||
 		(log.Term > args.LastLogTerm) ||
-		(log.Term == args.LastLogTerm && index > args.LastLogIndex) {
+		(log.Term == args.LastLogTerm && rf.GetLastIndex() > args.LastLogIndex) {
 		//fmt.Println(args, rf.VotedFor, rf.CurrentTerm, log.Term, index)
-		DPrintf("%t, %t, %t, %t, %t", (rf.Role == LEADER), (args.LastLogTerm < rf.CurrentTerm), (rf.VotedFor != NoOneChoose && rf.VotedFor != args.CandidateId),
-			(log.Term > args.LastLogTerm), (log.Term == args.LastLogTerm && index > args.LastLogIndex))
+		DPrintf("%t, %t, %t, %t, %t", (rf.Role == LEADER), (args.Term < rf.CurrentTerm), (rf.VotedFor != NoOneChoose && rf.VotedFor != args.CandidateId),
+			(log.Term > args.LastLogTerm), (log.Term == args.LastLogTerm && rf.GetLastIndex() > args.LastLogIndex))
 		canVote = false
 	} else {
+		rf.ResetRunVoteTicker()
 		rf.mu.Lock()
 		rf.VotedFor = args.CandidateId
 		canVote = true
-		rf.ResetRunVoteTicker()
+
+		rf.persist()
+
 		rf.mu.Unlock()
 	}
 
@@ -363,15 +401,6 @@ func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply)
 
 	reply.Term = rf.CurrentTerm
 	if args.Term < rf.CurrentTerm {
-		// 这里有个问题，当一个follower节点自闭久了自己把任期增加到很高，然后重新连接到集群后，就不会服从leader的管教，就会不停地竞选
-		//if len(args.Entries) > 0 && args.PrevLogTerm > rf.Log[rf.GetLastIndex()].Term {
-		//	// 如果是由日志term的强行压制
-		//	rf.mu.Lock()
-		//	rf.Role = FOLLOWER
-		//	rf.CurrentTerm = args.Term
-		//	rf.StopTicker()
-		//	rf.mu.Unlock()
-		//}
 		reply.Success = false
 		return
 	}
@@ -380,18 +409,22 @@ func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply)
 		DPrintf("%d[%d] 领导时收到其他领导者 %d[%d] 的Append消息", rf.me, rf.CurrentTerm, args.LeaderId, args.Term)
 	}
 	rf.mu.Lock()
-	rf.VotedFor = NoOneChoose
-	rf.Role = FOLLOWER
 	rf.ResetRunVoteTicker()
-	if rf.ctxCancelFunc != nil {
-		DPrintf("%d[%d] 正在参加竞选活动时接收 %d[%d] Appen消息，竞选被取消", rf.me, rf.CurrentTerm, args.LeaderId, args.Term)
-		(*rf.ctxCancelFunc)()
-		rf.ctxCancelFunc = nil
+	if rf.Role != FOLLOWER {
+		rf.VotedFor = NoOneChoose
+		rf.Role = FOLLOWER
+
+		if rf.ctxCancelFunc != nil {
+			DPrintf("%d[%d] 正在参加竞选活动时接收 %d[%d] Appen消息，竞选被取消", rf.me, rf.CurrentTerm, args.LeaderId, args.Term)
+			(*rf.ctxCancelFunc)()
+			rf.ctxCancelFunc = nil
+		}
+		if rf.LeaderTicker != nil {
+			rf.LeaderTicker.Stop()
+		}
+		rf.NormalHandler(args.Term)
+		rf.persist() // 在可能更改任期身份和VotedFor后，就得保存
 	}
-	if rf.LeaderTicker != nil {
-		rf.LeaderTicker.Stop()
-	}
-	rf.NormalHandler(args.Term)
 	rf.mu.Unlock()
 
 	if len(args.Entries) != 0 {
@@ -406,42 +439,24 @@ func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply)
 			reply.Success = false
 			return
 		} else {
-			var appendStartIndex = 0
-			for i, entity := range args.Entries {
-				correspondingIndex := i + args.PrevLogIndex + 1
-				if correspondingIndex > rf.GetLastIndex() {
-					break
-				}
-				appendStartIndex = i + 1
-				correspondingEntity := rf.Log[correspondingIndex]
-				if entity.Command != correspondingEntity.Command {
-					DPrintf("%d[%d] 日志Log第 %d 位置Command[%d]和Append消息序列第 %d 位置Command[%d]不一致\n",
-						rf.me, rf.CurrentTerm, correspondingIndex, correspondingEntity.Command, i, entity.Command)
-					rf.SliceLog(false, correspondingIndex)
-					reply.Success = false
-					return
-				}
+			rf.mu.Lock()
+			appendStartIndex := rf.GetLastIndex() - args.PrevLogIndex
+			if appendStartIndex < len(args.Entries) {
+				rf.AppendLog(true, args.Entries[appendStartIndex:]...)
 			}
-			rf.AppendLog(false, args.Entries[appendStartIndex:len(args.Entries)]...)
 			reply.Success = true
+			rf.mu.Unlock()
 			DPrintf("%d[%d] 更新日志序列%v\n", rf.me, rf.CurrentTerm, rf.Log)
 		}
+		rf.TryApply(false, args.LeaderCommit)
 	} else {
 		//DPrintf("%d 收到来自 %d 的心跳包消息\n", rf.me, args.LeaderId)
 		reply.Success = true
-	}
-
-	rf.mu.Lock()
-	if args.LeaderCommit > rf.CommitIndex {
-		oldCommitIndex := rf.CommitIndex
-		newCommitIndex := rf.SetCommitIndex(true, int(math.Min(float64(args.LeaderCommit), float64(rf.GetLastIndex()))))
-		//fmt.Println(oldCommitIndex, newCommitIndex)
-		for i := oldCommitIndex + 1; i <= newCommitIndex; i++ {
-			rf.Execute(i, rf.Log[i].Command)
-		}
-		rf.mu.Unlock()
-	} else {
-		rf.mu.Unlock()
+		//if rf.me == 0 {
+		//	DPrintf("收到心跳包，LeaderCommitIndex: %d，自身CommitIndex: %d, lastIndex: %d",
+		//		args.LeaderCommit, rf.CommitIndex, rf.GetLastIndex())
+		//}
+		rf.TryApply(false, args.LeaderCommit)
 	}
 
 }
@@ -512,20 +527,21 @@ func (rf *Raft) SendRequestVoteALl() bool {
 //
 func (rf *Raft) Heartbeat() bool {
 	rf.mu.Lock()
+	tmpRf := rf.GetDeepCopy()
+	rf.mu.Unlock()
 	item := AppendEntriesArgs{
 		Term:         rf.CurrentTerm,
 		LeaderId:     rf.me,
 		LeaderCommit: rf.CommitIndex,
 	}
-	rf.mu.Unlock()
 
 	//DPrintf("%d 发送心跳包", rf.me)
 	for id, _ := range rf.peers {
 		if id != rf.me {
-			go func(rf *Raft, id int) {
+			go func(realRf *Raft, id int, tmpRf *Raft) {
 				reply := AppendEntriesReply{}
 				rf.SendAppend(id, item, &reply)
-			}(rf, id)
+			}(rf, id, &tmpRf)
 		}
 	}
 	return true
@@ -543,45 +559,57 @@ func (rf *Raft) PrepareCommit(singleLog Log) int {
 	rf.mu.Unlock()
 	tmpRf := rf.GetDeepCopy()
 	for id, _ := range rf.peers {
-		if id != rf.me {
-			go func(c chan AppendEntriesReply, tmpRf *Raft, id int, log Log, realRf *Raft) {
-				var startPrevIndex = tmpRf.GetLastIndex() - 1
-				for true {
-					prevLogIndex := int(math.Max(0, math.Min(float64(startPrevIndex), float64(tmpRf.NextIndex[id]))))
+		if id == rf.me {
+			continue
+		}
+		go func(c chan AppendEntriesReply, tmpRf *Raft, id int, log Log, realRf *Raft) {
+			var startPrevIndex = tmpRf.GetLastIndex() - 1
+			for true {
+				if tmpRf.NextIndex[id] > tmpRf.GetLastIndex() || realRf.Role != LEADER || tmpRf.CurrentTerm < realRf.CurrentTerm {
+					return
+				}
 
-					if tmpRf.NextIndex[id] > tmpRf.GetLastIndex() || realRf.Role != LEADER {
-						return
-					}
-					item := AppendEntriesArgs{
-						Term:         tmpRf.CurrentTerm,
-						LeaderId:     tmpRf.me,
-						PrevLogIndex: prevLogIndex,
-						PrevLogTerm:  tmpRf.Log[prevLogIndex].Term,
-						Entries:      tmpRf.Log[prevLogIndex+1:],
-						LeaderCommit: tmpRf.CommitIndex,
-					}
-					tmpReply := AppendEntriesReply{}
-					ok := realRf.SendAppend(id, item, &tmpReply)
-					//DPrintf("%d 收到 %d Append回复[%t]，消息内容为%t", rf.me, id, ok, tmpReply.Success)
-					if ok && tmpReply.Success {
-						realRf.UpdateMatchIndex(id, insertIndex)
-						realRf.SetNextIndex(id, insertIndex)
+				prevLogIndex := int(math.Max(0, math.Min(float64(startPrevIndex), float64(tmpRf.NextIndex[id]-1)))) // 这里之前写成了NextIndex……
+
+				item := AppendEntriesArgs{
+					Term:         tmpRf.CurrentTerm,
+					LeaderId:     tmpRf.me,
+					PrevLogIndex: prevLogIndex,
+					PrevLogTerm:  tmpRf.Log[prevLogIndex].Term,
+					Entries:      tmpRf.Log[prevLogIndex+1:],
+					LeaderCommit: tmpRf.CommitIndex,
+				}
+				tmpReply := AppendEntriesReply{}
+				ok := false
+				select {
+				case <-time.After(time.Millisecond * 200):
+					break
+				default:
+					ok = realRf.SendAppend(id, item, &tmpReply)
+				}
+				if id == 0 {
+					DPrintf("%d 收到 %d Append回复[%t]，消息内容为%t", rf.me, id, ok, tmpReply.Success)
+				}
+				//DPrintf("%d 收到 %d Append回复[%t]，消息内容为%t", rf.me, id, ok, tmpReply.Success)
+				if ok && tmpReply.Success {
+					realRf.UpdateMatchIndex(id, insertIndex)
+					realRf.SetNextIndex(id, insertIndex+1)
+					c <- tmpReply
+					DPrintf("传入通道！")
+					realRf.MatchIndex[id] = int(math.Max(float64(realRf.MatchIndex[id]), float64(insertIndex)))
+					return
+				} else if !ok {
+					continue
+				} else {
+					tmpRf.DecrementNextIndex(id, prevLogIndex)
+					if tmpReply.Term > tmpRf.CurrentTerm {
 						c <- tmpReply
-						DPrintf("传入通道！")
+						DPrintf("%d[%d] 出现节点 %d[%d] 比自己任期大的情况！", tmpRf.me, tmpRf.CurrentTerm, id, tmpReply.Term)
 						return
-					} else if !ok {
-						continue
-					} else {
-						tmpRf.DecrementNextIndex(id, prevLogIndex)
-						if tmpReply.Term > tmpRf.CurrentTerm {
-							c <- tmpReply
-							DPrintf("%d[%d] 出现节点 %d[%d] 比自己任期大的情况！", tmpRf.me, tmpRf.CurrentTerm, id, tmpReply.Term)
-							return
-						}
 					}
 				}
-			}(c, &tmpRf, id, singleLog, rf)
-		}
+			}
+		}(c, &tmpRf, id, singleLog, rf)
 	}
 
 	var reply AppendEntriesReply
@@ -594,17 +622,12 @@ func (rf *Raft) PrepareCommit(singleLog Log) int {
 			if reply.Success {
 				trueCount++
 				if trueCount > int(math.Floor(float64(len(rf.peers)/2))) {
-					if insertIndex > rf.CommitIndex {
-						rf.mu.Lock()
-						oldCommitIndex := rf.CommitIndex
-						newCommitIndex := rf.SetCommitIndex(true, insertIndex)
-						//fmt.Println(oldCommitIndex, newCommitIndex)
-						for i := oldCommitIndex + 1; i <= newCommitIndex; i++ {
-							rf.Execute(i, rf.Log[i].Command)
-						}
-						rf.mu.Unlock()
-					}
-					DPrintf("%d[%d] 发送Append被超过一半的节点接受，位置：%d。 日志序列：%v", rf.me, rf.CurrentTerm, insertIndex, rf.Log)
+					DPrintf("%d[%d] 发送Append被超过一半(%d/%d)个的节点接受，位置：%d。 日志序列：%v",
+						tmpRf.me, tmpRf.CurrentTerm, trueCount, len(rf.peers), insertIndex, tmpRf.Log)
+					rf.mu.Lock()
+					rf.TryApply(true, insertIndex)
+					rf.persist()
+					rf.mu.Unlock()
 					//close(c)
 					return insertIndex
 				}
@@ -612,10 +635,11 @@ func (rf *Raft) PrepareCommit(singleLog Log) int {
 				// 当任期失效时，才会出现这个情况
 				hasDown = true
 				maxTermHasSeen = int(math.Min(float64(maxTermHasSeen), float64(reply.Term)))
+				rf.ResetRunVoteTicker()
 			}
 			break
-		case <-time.After(time.Millisecond * 400):
-			DPrintf("%d[%d] 发送Append超时，未满一半节点接受", rf.me, rf.CurrentTerm)
+		case <-time.After(time.Millisecond * 2000):
+			DPrintf("%d[%d] 发送Append[%d]超时，未满一半节点接受", tmpRf.me, tmpRf.CurrentTerm, singleLog.Command)
 			if hasDown && rf.Role == LEADER {
 				// 如果没有一半节点接受且已经出现别的节点任期比自己大的情况，退位
 				rf.mu.Lock()
@@ -659,6 +683,7 @@ func (rf *Raft) Lead() {
 }
 
 func (rf *Raft) RunVote(ctx context.Context, ticker *time.Ticker) bool {
+	tmpRf := rf.GetDeepCopy()
 	select {
 	case <-ctx.Done():
 		DPrintf("%d[%d] 中途停止竞选\n", rf.me, rf.CurrentTerm)
@@ -674,24 +699,31 @@ func (rf *Raft) RunVote(ctx context.Context, ticker *time.Ticker) bool {
 		rf.mu.Unlock()
 		success := rf.SendRequestVoteALl()
 		if success {
-			rf.mu.Lock()
-			rf.Role = LEADER
-			rf.VotedFor = NoOneChoose
-			rf.StopTicker()
-			DPrintf("%d[%d] 竞选成功！\n", rf.me, rf.CurrentTerm)
-			lastIndex := rf.GetLastIndex()
-			for id := 0; id < len(rf.peers); id++ {
-				rf.NextIndex[id] = lastIndex + 1
-				rf.MatchIndex[id] = 0
+			if rf.CurrentTerm == tmpRf.CurrentTerm {
+				rf.mu.Lock()
+				rf.Role = LEADER
+				rf.VotedFor = NoOneChoose
+				rf.StopTicker()
+				DPrintf("%d[%d] 竞选成功！\n", tmpRf.me, tmpRf.CurrentTerm)
+				lastIndex := rf.GetLastIndex()
+				for id := 0; id < len(rf.peers); id++ {
+					rf.NextIndex[id] = lastIndex + 1
+					rf.MatchIndex[id] = 0
+				}
+				rf.persist()
+				rf.mu.Unlock()
+				return true
 			}
-			rf.mu.Unlock()
-			return true
 		} else {
-			rf.mu.Lock()
-			rf.Role = FOLLOWER
-			rf.VotedFor = NoOneChoose
-			rf.mu.Unlock()
-			DPrintf("%d[%d] 竞选失败，重新竞选！\n", rf.me, rf.CurrentTerm)
+			if rf.CurrentTerm == tmpRf.CurrentTerm {
+				rf.mu.Lock()
+				// 定时器终止好像有点不好用，所以在这里判断一下现在的term和之前发出请求的term是不是一个term
+				rf.Role = FOLLOWER
+				rf.VotedFor = NoOneChoose
+				DPrintf("%d[%d] 竞选失败，重新竞选！\n", tmpRf.me, tmpRf.CurrentTerm)
+				rf.persist()
+				rf.mu.Unlock()
+			}
 		}
 	}
 	return false

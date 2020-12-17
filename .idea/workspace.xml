@@ -192,6 +192,9 @@
   <component name="TypeScriptGeneratedFilesManager">
     <option name="version" value="2" />
   </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="oldMeFiltersMigrated" value="true" />
+  </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="Part1" />
     <MESSAGE value="Part2 FailNoAgree Concurrent Rejoin" />
@@ -254,14 +257,18 @@
       <screen x="0" y="0" width="1920" height="1050" />
     </state>
     <state x="552" y="257" key="Vcs.Push.Dialog.v2/0.0.1920.1050@0.0.1920.1050" timestamp="1608183614118" />
+    <state x="-18" y="7" width="1736" height="866" key="com.intellij.history.integration.ui.views.FileHistoryDialog" timestamp="1608214323659">
+      <screen x="0" y="0" width="1920" height="1050" />
+    </state>
+    <state x="-18" y="7" width="1736" height="866" key="com.intellij.history.integration.ui.views.FileHistoryDialog/0.0.1920.1050@0.0.1920.1050" timestamp="1608214323659" />
     <state x="853" y="259" key="com.intellij.tools.ToolSelectDialog.dimensionServiceKey" timestamp="1608038874903">
       <screen x="0" y="0" width="1920" height="1050" />
     </state>
     <state x="853" y="259" key="com.intellij.tools.ToolSelectDialog.dimensionServiceKey/0.0.1920.1050@0.0.1920.1050" timestamp="1608038874903" />
-    <state x="662" y="259" width="596" height="532" key="find.popup" timestamp="1608182624671">
+    <state x="662" y="259" width="596" height="532" key="find.popup" timestamp="1608214937487">
       <screen x="0" y="0" width="1920" height="1050" />
     </state>
-    <state x="662" y="259" width="596" height="532" key="find.popup/0.0.1920.1050@0.0.1920.1050" timestamp="1608182624671" />
+    <state x="662" y="259" width="596" height="532" key="find.popup/0.0.1920.1050@0.0.1920.1050" timestamp="1608214937487" />
     <state x="623" y="227" width="672" height="678" key="search.everywhere.popup" timestamp="1608046337600">
       <screen x="0" y="0" width="1920" height="1050" />
     </state>
