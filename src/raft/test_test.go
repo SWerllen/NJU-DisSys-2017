@@ -47,15 +47,6 @@ func TestReElection(t *testing.T) {
 
 	fmt.Printf("Test: election after network failure ...\n")
 
-	go func(rfs []*Raft, connected *[]bool) {
-		timer := time.NewTicker(time.Millisecond * 50)
-		for {
-			<-timer.C
-			fmt.Printf("   状态：[0]%s|%t, [1]%s|%t, [2]%s|%t   \n", rfs[0].Role, (*connected)[0],
-				rfs[1].Role, (*connected)[1], rfs[2].Role, (*connected)[2])
-		}
-	}(cfg.rafts, &cfg.connected)
-
 	leader1 := cfg.checkOneLeader()
 	fmt.Println("_________________________1_______________________________")
 
@@ -154,11 +145,23 @@ func TestFailNoAgree(t *testing.T) {
 
 	cfg.one(10, servers)
 
+	fmt.Println("_____________________2__________________________")
+	for id, peer := range cfg.rafts {
+		fmt.Printf("id: %d, log: %v\n", id, peer.Log)
+	}
+	fmt.Println("_________________________________________________")
+
 	// 3 of 5 followers disconnect
 	leader := cfg.checkOneLeader()
 	cfg.disconnect((leader + 1) % servers)
 	cfg.disconnect((leader + 2) % servers)
 	cfg.disconnect((leader + 3) % servers)
+
+	fmt.Println("_____________________3__________________________")
+	for id, peer := range cfg.rafts {
+		fmt.Printf("id: %d, log: %v\n", id, peer.Log)
+	}
+	fmt.Println("_________________________________________________")
 
 	index, _, ok := cfg.rafts[leader].Start(20)
 	if ok != true {
@@ -168,6 +171,11 @@ func TestFailNoAgree(t *testing.T) {
 		t.Fatalf("expected index 2, got %v", index)
 	}
 
+	fmt.Println("_____________________4_________________________")
+	for id, peer := range cfg.rafts {
+		fmt.Printf("id: %d, log: %v\n", id, peer.Log)
+	}
+	fmt.Println("_________________________________________________")
 	time.Sleep(2 * RaftElectionTimeout)
 
 	n, _ := cfg.nCommitted(index)
@@ -184,6 +192,7 @@ func TestFailNoAgree(t *testing.T) {
 	// among their own ranks, forgetting index 2.
 	// or perhaps
 	leader2 := cfg.checkOneLeader()
+	fmt.Println("_________________________________________________")
 	index2, _, ok2 := cfg.rafts[leader2].Start(30)
 	if ok2 == false {
 		t.Fatalf("leader2 rejected Start()")
@@ -393,6 +402,12 @@ func TestBackup(t *testing.T) {
 	cfg.connect((leader1 + 0) % servers)
 	cfg.connect((leader1 + 1) % servers)
 	cfg.connect(other)
+
+	fmt.Println("_____________________2__________________________")
+	for id, peer := range cfg.rafts {
+		fmt.Printf("id: %d, log: %v\n", id, peer.Log)
+	}
+	fmt.Println("_________________________________________________")
 
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
