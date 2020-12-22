@@ -80,8 +80,10 @@ type Raft struct {
 	LastApplied int
 
 	// Leaders
-	NextIndex  []int
-	MatchIndex []int
+	NextIndex      []int
+	MatchIndex     []int
+	ServerPatching []bool
+
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 }
@@ -159,7 +161,7 @@ func (rf *Raft) SetNextIndex(id int, index int) {
 func (rf *Raft) DecrementNextIndex(id int, preIndex int) {
 	rf.mu.Lock()
 	if rf.NextIndex[id] >= preIndex {
-		rf.NextIndex[id] = preIndex - 1
+		rf.NextIndex[id] = preIndex
 	}
 	rf.mu.Unlock()
 }
@@ -408,8 +410,11 @@ func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply)
 	if rf.Role == LEADER {
 		DPrintf("%d[%d] 领导时收到其他领导者 %d[%d] 的Append消息", rf.me, rf.CurrentTerm, args.LeaderId, args.Term)
 	}
-	rf.mu.Lock()
 	rf.ResetRunVoteTicker()
+	rf.mu.Lock()
+	if rf.LeaderTicker != nil {
+		rf.LeaderTicker.Stop()
+	}
 	if rf.Role != FOLLOWER {
 		rf.VotedFor = NoOneChoose
 		rf.Role = FOLLOWER
@@ -418,9 +423,6 @@ func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply)
 			DPrintf("%d[%d] 正在参加竞选活动时接收 %d[%d] Appen消息，竞选被取消", rf.me, rf.CurrentTerm, args.LeaderId, args.Term)
 			(*rf.ctxCancelFunc)()
 			rf.ctxCancelFunc = nil
-		}
-		if rf.LeaderTicker != nil {
-			rf.LeaderTicker.Stop()
 		}
 		rf.NormalHandler(args.Term)
 		rf.persist() // 在可能更改任期身份和VotedFor后，就得保存
@@ -433,6 +435,7 @@ func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply)
 		if args.PrevLogIndex > rf.GetLastIndex() {
 			DPrintf("%d[%d] 日志缺少PreLogIndex位置记录\n", rf.me, rf.CurrentTerm)
 			reply.Success = false
+			return
 		} else if rf.Log[args.PrevLogIndex].Term != args.PrevLogTerm {
 			DPrintf("%d[%d] 日志PreLogIndex位置记录任期与PrevLogTerm不符\n", rf.me, rf.CurrentTerm)
 			rf.SliceLog(false, args.PrevLogIndex)
@@ -440,23 +443,51 @@ func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply)
 			return
 		} else {
 			rf.mu.Lock()
-			appendStartIndex := rf.GetLastIndex() - args.PrevLogIndex
+			var appendStartIndex = 0
+			for i, entity := range args.Entries {
+				correspondingIndex := i + args.PrevLogIndex + 1
+				if correspondingIndex > rf.GetLastIndex() {
+					break
+				}
+				correspondingEntity := rf.Log[correspondingIndex]
+				if entity.Term != correspondingEntity.Term {
+					DPrintf("%d 日志Log第 %d 位置Term[%d]和Append消息序列第 %d 位置Term[%d]不一致\n",
+						rf.me, correspondingIndex, correspondingEntity.Term, i, entity.Term)
+					rf.SliceLog(false, correspondingIndex)
+					break
+				}
+				appendStartIndex = i + 1
+			}
 			if appendStartIndex < len(args.Entries) {
 				rf.AppendLog(true, args.Entries[appendStartIndex:]...)
 			}
 			reply.Success = true
 			rf.mu.Unlock()
-			DPrintf("%d[%d] 更新日志序列%v\n", rf.me, rf.CurrentTerm, rf.Log)
+			DPrintf("%d[%d] 更新日志序列%d\n", rf.me, rf.CurrentTerm, len(rf.Log))
 		}
 		rf.TryApply(false, args.LeaderCommit)
 	} else {
 		//DPrintf("%d 收到来自 %d 的心跳包消息\n", rf.me, args.LeaderId)
 		reply.Success = true
-		//if rf.me == 0 {
-		//	DPrintf("收到心跳包，LeaderCommitIndex: %d，自身CommitIndex: %d, lastIndex: %d",
-		//		args.LeaderCommit, rf.CommitIndex, rf.GetLastIndex())
+		DPrintf("收到心跳包，LeaderCommitIndex: %d，自身CommitIndex: %d, lastIndex: %d",
+			args.LeaderCommit, rf.CommitIndex, rf.GetLastIndex())
+		//if args.LeaderCommit > rf.CommitIndex {
+		//	if args.PrevLogIndex > rf.GetLastIndex() {
+		//		DPrintf("%d[%d] 日志缺少PreLogIndex位置记录\n", rf.me, rf.CurrentTerm)
+		//		reply.Success = false
+		//		return
+		//	} else if rf.Log[args.PrevLogIndex].Term != args.PrevLogTerm {
+		//		DPrintf("%d[%d] 日志PreLogIndex位置记录任期与PrevLogTerm不符\n", rf.me, rf.CurrentTerm)
+		//		rf.SliceLog(false, args.PrevLogIndex)
+		//		reply.Success = false
+		//		return
+		//	} else if rf.GetLastIndex() < args.LeaderCommit {
+		//		DPrintf("%d[%d] 日志LeaderCommit位置超过本地存储日志长度\n", rf.me, rf.CurrentTerm)
+		//		reply.Success = false
+		//		return
+		//	}
+		//	rf.TryApply(false, args.LeaderCommit)
 		//}
-		rf.TryApply(false, args.LeaderCommit)
 	}
 
 }
@@ -522,9 +553,177 @@ func (rf *Raft) SendRequestVoteALl() bool {
 	return false
 }
 
+func (rf *Raft) LogPatch(server int, tmpRf *Raft, c chan AppendEntriesReply, insist bool) {
+	// 对相应Append消息为false且并非因为Term落后的情况进行统一的日志对齐操作
+	// insist标明该patch是否是必须要返回结果的，比如Append消息等待接收好了就返回结果
+	if rf.ServerPatching[server] && !insist {
+		// 如果遇到正在patch的情况
+		select {
+		case <-time.After(time.Millisecond * 300):
+			return
+		default:
+			break
+		}
+	}
+	for {
+		if rf.ServerPatching[server] {
+			time.Sleep(time.Millisecond * 100)
+		} else {
+			rf.mu.Lock()
+			if rf.ServerPatching[server] {
+				rf.mu.Unlock()
+				continue
+			} else {
+				rf.ServerPatching[server] = true
+				rf.mu.Unlock()
+				break
+			}
+		}
+	}
+	for {
+		if rf.Role != LEADER || tmpRf.CurrentTerm < rf.CurrentTerm {
+			// 如果已经退位或者任期更替了，就不再执行这个循环了
+			rf.ServerPatching[server] = false
+			return
+		}
+		prevLogIndex := tmpRf.NextIndex[server] - 1
+
+		item := AppendEntriesArgs{
+			Term:         tmpRf.CurrentTerm,
+			LeaderId:     tmpRf.me,
+			PrevLogIndex: prevLogIndex,
+			PrevLogTerm:  tmpRf.Log[prevLogIndex].Term,
+			Entries:      tmpRf.Log[prevLogIndex+1:],
+			LeaderCommit: tmpRf.CommitIndex,
+		}
+		tmpReply := AppendEntriesReply{}
+		ok := false
+		select {
+		case <-time.After(time.Millisecond * 200):
+			break
+		default:
+			ok = rf.SendAppend(server, item, &tmpReply)
+		}
+		//if id == 0 {
+		//	DPrintf("%d 收到 %d Append回复[%t]，消息内容为%t", rf.me, id, ok, tmpReply.Success)
+		//}
+		//DPrintf("%d 收到 %d Append回复[%t]，消息内容为%t", rf.me, id, ok, tmpReply.Success)
+		if ok && tmpReply.Success {
+			rf.UpdateMatchIndex(server, tmpRf.GetLastIndex())
+			rf.SetNextIndex(server, tmpRf.GetLastIndex()+1)
+			c <- tmpReply
+			DPrintf("传入通道！")
+			rf.ServerPatching[server] = false
+			return
+		} else if !ok {
+			// 发送不成功就重发
+			continue
+		} else {
+			preNext := tmpRf.NextIndex[server]
+			tmpRf.DecrementNextIndex(server, prevLogIndex)
+			DPrintf("%d[%d] 降低 %d 的NextIndex[%d -> %d]", rf.me, rf.CurrentTerm, server, preNext, rf.NextIndex[server])
+			if tmpReply.Term > tmpRf.CurrentTerm {
+				c <- tmpReply
+				DPrintf("%d[%d] 出现节点 %d[%d] 比自己任期大的情况！", tmpRf.me, tmpRf.CurrentTerm, server, tmpReply.Term)
+				rf.ServerPatching[server] = false
+				return
+			}
+		}
+	}
+
+}
+
 //
 // 发送给所有的非己节点发送一样的包
 //
+func (rf *Raft) Heartbeat2() bool {
+	c := make(chan AppendEntriesReply)
+	tmpRf := rf.GetDeepCopy()
+	insertIndex := tmpRf.GetLastIndex()
+	for id, _ := range rf.peers {
+		if id == tmpRf.me {
+			continue
+		}
+		go func(c chan AppendEntriesReply, tmpRf *Raft, id int, realRf *Raft) {
+			//var entriesToSend []Log // 一开始先发空的，如果节点返回false，那就当成append来处理
+			prevLogIndex := tmpRf.NextIndex[id] - 1
+
+			item := AppendEntriesArgs{
+				Term:         tmpRf.CurrentTerm,
+				LeaderId:     tmpRf.me,
+				PrevLogIndex: prevLogIndex,
+				PrevLogTerm:  tmpRf.Log[prevLogIndex].Term,
+				Entries:      tmpRf.Log[prevLogIndex+1:],
+				LeaderCommit: tmpRf.CommitIndex,
+			}
+			tmpReply := AppendEntriesReply{}
+			ok := false
+			select {
+			case <-time.After(time.Millisecond * 200):
+				break
+			default:
+				if id == 1 {
+					DPrintf("%d[%d] 发送Heartbeat包\n", rf.me, rf.CurrentTerm)
+				}
+				ok = realRf.SendAppend(id, item, &tmpReply)
+				if id == 1 {
+					DPrintf("%d[%d] 发送Heartbeat包收到 【ok: %t, success: %t, term: %d】\n", rf.me, rf.CurrentTerm, ok, tmpReply.Success, tmpReply.Term)
+				}
+			}
+			if ok && tmpReply.Success {
+				c <- tmpReply
+				realRf.UpdateMatchIndex(id, insertIndex)
+				realRf.SetNextIndex(id, insertIndex+1)
+				return
+			} else if !ok {
+				return
+			} else {
+				tmpRf.DecrementNextIndex(id, prevLogIndex)
+
+				if tmpReply.Term > tmpRf.CurrentTerm {
+					c <- tmpReply
+					DPrintf("%d[%d] 出现节点 %d[%d] 比自己任期大的情况！", tmpRf.me, tmpRf.CurrentTerm, id, tmpReply.Term)
+					return
+				}
+
+				rf.LogPatch(id, tmpRf, c, false)
+				return
+			}
+		}(c, &tmpRf, id, rf)
+	}
+
+	var reply AppendEntriesReply
+	hasDown := false // 是否出现过任期没有别的节点任期大的情况
+	maxTermHasSeen := rf.CurrentTerm
+	for i := 0; i < len(rf.peers)-1; i++ {
+		select {
+		case reply = <-c:
+			if !reply.Success {
+				// 当任期失效时，才会出现这个情况
+				hasDown = true
+				maxTermHasSeen = int(math.Min(float64(maxTermHasSeen), float64(reply.Term)))
+				rf.ResetRunVoteTicker()
+			}
+			break
+		case <-time.After(time.Millisecond * 200):
+			if hasDown && rf.Role == LEADER {
+				// 如果没有一半节点接受且已经出现别的节点任期比自己大的情况，退位
+				rf.mu.Lock()
+				rf.Role = FOLLOWER
+				rf.CurrentTerm = maxTermHasSeen
+				if rf.LeaderTicker != nil {
+					rf.LeaderTicker.Stop()
+				}
+				rf.mu.Unlock()
+				return false
+			}
+			return true
+			//close(c)
+		}
+	}
+	return true
+}
+
 func (rf *Raft) Heartbeat() bool {
 	rf.mu.Lock()
 	tmpRf := rf.GetDeepCopy()
@@ -556,57 +755,57 @@ func (rf *Raft) PrepareCommit(singleLog Log) int {
 	rf.mu.Lock()
 	rf.AppendLog(true, singleLog)
 	insertIndex := rf.GetLastIndex()
-	rf.mu.Unlock()
 	tmpRf := rf.GetDeepCopy()
+	rf.mu.Unlock()
 	for id, _ := range rf.peers {
 		if id == rf.me {
 			continue
 		}
 		go func(c chan AppendEntriesReply, tmpRf *Raft, id int, log Log, realRf *Raft) {
 			var startPrevIndex = tmpRf.GetLastIndex() - 1
-			for true {
-				if tmpRf.NextIndex[id] > tmpRf.GetLastIndex() || realRf.Role != LEADER || tmpRf.CurrentTerm < realRf.CurrentTerm {
-					return
-				}
+			if tmpRf.NextIndex[id] > tmpRf.GetLastIndex() || realRf.Role != LEADER || tmpRf.CurrentTerm < realRf.CurrentTerm {
+				return
+			}
 
-				prevLogIndex := int(math.Max(0, math.Min(float64(startPrevIndex), float64(tmpRf.NextIndex[id]-1)))) // 这里之前写成了NextIndex……
+			prevLogIndex := int(math.Max(0, math.Min(float64(startPrevIndex), float64(tmpRf.NextIndex[id]-1))))
 
-				item := AppendEntriesArgs{
-					Term:         tmpRf.CurrentTerm,
-					LeaderId:     tmpRf.me,
-					PrevLogIndex: prevLogIndex,
-					PrevLogTerm:  tmpRf.Log[prevLogIndex].Term,
-					Entries:      tmpRf.Log[prevLogIndex+1:],
-					LeaderCommit: tmpRf.CommitIndex,
-				}
-				tmpReply := AppendEntriesReply{}
-				ok := false
-				select {
-				case <-time.After(time.Millisecond * 200):
-					break
-				default:
-					ok = realRf.SendAppend(id, item, &tmpReply)
-				}
-				if id == 0 {
-					DPrintf("%d 收到 %d Append回复[%t]，消息内容为%t", rf.me, id, ok, tmpReply.Success)
-				}
-				//DPrintf("%d 收到 %d Append回复[%t]，消息内容为%t", rf.me, id, ok, tmpReply.Success)
-				if ok && tmpReply.Success {
-					realRf.UpdateMatchIndex(id, insertIndex)
-					realRf.SetNextIndex(id, insertIndex+1)
+			item := AppendEntriesArgs{
+				Term:         tmpRf.CurrentTerm,
+				LeaderId:     tmpRf.me,
+				PrevLogIndex: prevLogIndex,
+				PrevLogTerm:  tmpRf.Log[prevLogIndex].Term,
+				Entries:      tmpRf.Log[prevLogIndex+1:],
+				LeaderCommit: tmpRf.CommitIndex,
+			}
+			tmpReply := AppendEntriesReply{}
+			ok := false
+			select {
+			case <-time.After(time.Millisecond * 200):
+				break
+			default:
+				ok = realRf.SendAppend(id, item, &tmpReply)
+			}
+			//if id == 0 {
+			//	DPrintf("%d 收到 %d Append回复[%t]，消息内容为%t", rf.me, id, ok, tmpReply.Success)
+			//}
+			//DPrintf("%d 收到 %d Append回复[%t]，消息内容为%t", rf.me, id, ok, tmpReply.Success)
+			if ok && tmpReply.Success {
+				realRf.UpdateMatchIndex(id, insertIndex)
+				realRf.SetNextIndex(id, insertIndex+1)
+				c <- tmpReply
+				DPrintf("传入通道！")
+				realRf.MatchIndex[id] = int(math.Max(float64(realRf.MatchIndex[id]), float64(insertIndex)))
+				return
+			} else if !ok {
+				rf.LogPatch(id, tmpRf, c, true)
+			} else {
+				tmpRf.DecrementNextIndex(id, prevLogIndex)
+				if tmpReply.Term > tmpRf.CurrentTerm {
 					c <- tmpReply
-					DPrintf("传入通道！")
-					realRf.MatchIndex[id] = int(math.Max(float64(realRf.MatchIndex[id]), float64(insertIndex)))
+					DPrintf("%d[%d] 出现节点 %d[%d] 比自己任期大的情况！", tmpRf.me, tmpRf.CurrentTerm, id, tmpReply.Term)
 					return
-				} else if !ok {
-					continue
 				} else {
-					tmpRf.DecrementNextIndex(id, prevLogIndex)
-					if tmpReply.Term > tmpRf.CurrentTerm {
-						c <- tmpReply
-						DPrintf("%d[%d] 出现节点 %d[%d] 比自己任期大的情况！", tmpRf.me, tmpRf.CurrentTerm, id, tmpReply.Term)
-						return
-					}
+					rf.LogPatch(id, tmpRf, c, true)
 				}
 			}
 		}(c, &tmpRf, id, singleLog, rf)
@@ -635,10 +834,10 @@ func (rf *Raft) PrepareCommit(singleLog Log) int {
 				// 当任期失效时，才会出现这个情况
 				hasDown = true
 				maxTermHasSeen = int(math.Min(float64(maxTermHasSeen), float64(reply.Term)))
-				rf.ResetRunVoteTicker()
+				rf.ResetRunVoteTicker() // TODO: 应该可以不要这个
 			}
 			break
-		case <-time.After(time.Millisecond * 2000):
+		case <-time.After(time.Millisecond * 300):
 			DPrintf("%d[%d] 发送Append[%d]超时，未满一半节点接受", tmpRf.me, tmpRf.CurrentTerm, singleLog.Command)
 			if hasDown && rf.Role == LEADER {
 				// 如果没有一半节点接受且已经出现别的节点任期比自己大的情况，退位
@@ -709,6 +908,7 @@ func (rf *Raft) RunVote(ctx context.Context, ticker *time.Ticker) bool {
 				for id := 0; id < len(rf.peers); id++ {
 					rf.NextIndex[id] = lastIndex + 1
 					rf.MatchIndex[id] = 0
+					rf.ServerPatching[id] = false
 				}
 				rf.persist()
 				rf.mu.Unlock()
@@ -745,7 +945,7 @@ func WaitForRunVote(rf *Raft) {
 			rf.mu.Lock()
 			rf.ctxCancelFunc = &cancel
 			rf.mu.Unlock()
-			DPrintf("%d[%d] 取消函数的地址：%p", rf.me, rf.CurrentTerm, rf.ctxCancelFunc)
+			// DPrintf("%d[%d] 取消函数的地址：%p", rf.me, rf.CurrentTerm, rf.ctxCancelFunc)
 
 			res := rf.RunVote(ctx, rf.Ticker)
 
@@ -837,9 +1037,11 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.MatchIndex = make([]int, len(peers))
 	rf.NextIndex = make([]int, len(peers))
+	rf.ServerPatching = make([]bool, len(peers))
 	for i := 0; i < len(peers); i++ {
 		rf.NextIndex[i] = 0
 		rf.MatchIndex[i] = 0
+		rf.ServerPatching[i] = false
 	}
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
