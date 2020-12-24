@@ -25,9 +25,11 @@
     </select>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="558ac743-39b1-4d9c-ab46-81873a9bc231" name="Default" comment="Part2 FailNoAgree Concurrent Rejoin">
+    <list default="true" id="558ac743-39b1-4d9c-ab46-81873a9bc231" name="Default" comment="暂时保存，尝试">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/raft/config.go" beforeDir="false" afterPath="$PROJECT_DIR$/src/raft/config.go" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/raft/raft.go" beforeDir="false" afterPath="$PROJECT_DIR$/src/raft/raft.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/raft/test_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/src/raft/test_test.go" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -36,6 +38,11 @@
   </component>
   <component name="GOROOT" path="C:\Go" />
   <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$" value="master" />
+      </map>
+    </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
   <component name="GradleLocalSettings">
@@ -200,6 +207,8 @@
         <item itemvalue="Go Test.TestFailNoAgree in test_test.go" />
         <item itemvalue="Go Build.go build config.go" />
         <item itemvalue="Go Build.go test raft.go" />
+        <item itemvalue="Go Test.TestFailNoAgree in test_test.go" />
+        <item itemvalue="Go Build.go build config.go" />
       </list>
     </recent_temporary>
   </component>
@@ -318,14 +327,16 @@
       <screen x="0" y="0" width="1920" height="1050" />
     </state>
     <state x="853" y="259" key="com.intellij.tools.ToolSelectDialog.dimensionServiceKey/0.0.1920.1050@0.0.1920.1050" timestamp="1608038874903" />
-    <state x="662" y="259" width="596" height="532" key="find.popup" timestamp="1608214937487">
-      <screen x="0" y="0" width="1920" height="1050" />
+    <state x="883" y="348" width="795" height="714" key="find.popup" timestamp="1608643463952">
+      <screen x="0" y="0" width="2560" height="1409" />
     </state>
     <state x="662" y="259" width="596" height="532" key="find.popup/0.0.1920.1050@0.0.1920.1050" timestamp="1608214937487" />
-    <state x="623" y="227" width="672" height="678" key="search.everywhere.popup" timestamp="1608046337600">
-      <screen x="0" y="0" width="1920" height="1050" />
+    <state x="883" y="348" width="795" height="714" key="find.popup/3840.662.1920.1034/-1920.663.1920.1050/0.0.2560.1409@0.0.2560.1409" timestamp="1608643463952" />
+    <state x="831" y="305" width="896" height="910" key="search.everywhere.popup" timestamp="1608643702779">
+      <screen x="0" y="0" width="2560" height="1409" />
     </state>
     <state x="623" y="227" width="672" height="678" key="search.everywhere.popup/0.0.1920.1050@0.0.1920.1050" timestamp="1608046337600" />
+    <state x="831" y="305" width="896" height="910" key="search.everywhere.popup/3840.662.1920.1034/-1920.663.1920.1050/0.0.2560.1409@0.0.2560.1409" timestamp="1608643702779" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/NJU_DisSys_2017$TestFailNoAgree_in_test_test_go.out" NAME="TestFailNoAgree in test_test.go Coverage Results" MODIFIED="1608045127306" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="GoCoverage" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" />

@@ -41,7 +41,7 @@ const (
 	LEADER               Role = "Leader"
 	HeartBeatDuration    int  = 50
 	NoOneChoose          int  = -1
-	Diff_Duration_Server int  = 300
+	Diff_Duration_Server int  = 200
 )
 
 //
@@ -308,31 +308,28 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	canVote := false
 	reply.Term = rf.CurrentTerm
 
-	if rf.Role == LEADER && args.Term > rf.CurrentTerm {
-		rf.mu.Lock()
-		rf.Role = FOLLOWER
-		rf.CurrentTerm = args.Term
-		rf.VotedFor = NoOneChoose
+	rf.mu.Lock()
+	if args.Term > rf.CurrentTerm {
+		if rf.Role != FOLLOWER {
+			rf.Role = FOLLOWER
 
-		rf.persist()
+			rf.ResetRunVoteTicker()
 
-		if rf.LeaderTicker != nil {
-			rf.LeaderTicker.Stop()
+			if rf.ctxCancelFunc != nil && (*rf.ctxCancelFunc) != nil {
+				(*rf.ctxCancelFunc)()
+				rf.ctxCancelFunc = nil
+			}
+			if rf.LeaderTicker != nil {
+				rf.LeaderTicker.Stop()
+			}
 		}
-		rf.mu.Unlock()
-	} else if args.Term > rf.CurrentTerm {
-		rf.mu.Lock()
-		// 如果竞选任期增加了，之前投的票也不算
-		rf.VotedFor = NoOneChoose
-		rf.CurrentTerm = args.Term
-
-		rf.persist()
-
-		if rf.ctxCancelFunc != nil && (*rf.ctxCancelFunc) != nil {
-			(*rf.ctxCancelFunc)()
+		if rf.VotedFor != NoOneChoose {
+			rf.VotedFor = NoOneChoose
 		}
-		rf.mu.Unlock()
+		rf.CurrentTerm = args.Term
+		rf.persist()
 	}
+	rf.mu.Unlock()
 
 	log := rf.Log[rf.GetLastIndex()]
 	if (rf.Role == LEADER) ||
@@ -341,8 +338,8 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 		(log.Term > args.LastLogTerm) ||
 		(log.Term == args.LastLogTerm && rf.GetLastIndex() > args.LastLogIndex) {
 		//fmt.Println(args, rf.VotedFor, rf.CurrentTerm, log.Term, index)
-		DPrintf("%t, %t, %t, %t, %t", (rf.Role == LEADER), (args.Term < rf.CurrentTerm), (rf.VotedFor != NoOneChoose && rf.VotedFor != args.CandidateId),
-			(log.Term > args.LastLogTerm), (log.Term == args.LastLogTerm && rf.GetLastIndex() > args.LastLogIndex))
+		DPrintf("%t, %t, %t, %t, %t", rf.Role == LEADER, args.Term < rf.CurrentTerm, rf.VotedFor != NoOneChoose && rf.VotedFor != args.CandidateId,
+			log.Term > args.LastLogTerm, log.Term == args.LastLogTerm && rf.GetLastIndex() > args.LastLogIndex)
 		canVote = false
 	} else {
 		rf.ResetRunVoteTicker()
@@ -411,6 +408,7 @@ func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply)
 		DPrintf("%d[%d] 领导时收到其他领导者 %d[%d] 的Append消息", rf.me, rf.CurrentTerm, args.LeaderId, args.Term)
 	}
 	rf.ResetRunVoteTicker()
+	needPersist := false
 	rf.mu.Lock()
 	if rf.LeaderTicker != nil {
 		rf.LeaderTicker.Stop()
@@ -418,14 +416,20 @@ func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply)
 	if rf.Role != FOLLOWER {
 		rf.VotedFor = NoOneChoose
 		rf.Role = FOLLOWER
+		needPersist = true
 
 		if rf.ctxCancelFunc != nil {
 			DPrintf("%d[%d] 正在参加竞选活动时接收 %d[%d] Appen消息，竞选被取消", rf.me, rf.CurrentTerm, args.LeaderId, args.Term)
 			(*rf.ctxCancelFunc)()
 			rf.ctxCancelFunc = nil
 		}
+	}
+	if args.Term > rf.CurrentTerm {
 		rf.NormalHandler(args.Term)
-		rf.persist() // 在可能更改任期身份和VotedFor后，就得保存
+		needPersist = true
+	}
+	if needPersist {
+		rf.persist()
 	}
 	rf.mu.Unlock()
 
@@ -453,7 +457,7 @@ func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply)
 				if entity.Term != correspondingEntity.Term {
 					DPrintf("%d 日志Log第 %d 位置Term[%d]和Append消息序列第 %d 位置Term[%d]不一致\n",
 						rf.me, correspondingIndex, correspondingEntity.Term, i, entity.Term)
-					rf.SliceLog(false, correspondingIndex)
+					rf.SliceLog(true, correspondingIndex) // 死锁内死锁，失误过
 					break
 				}
 				appendStartIndex = i + 1
@@ -463,31 +467,30 @@ func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply)
 			}
 			reply.Success = true
 			rf.mu.Unlock()
-			DPrintf("%d[%d] 更新日志序列%d\n", rf.me, rf.CurrentTerm, len(rf.Log))
+			//DPrintf("%d[%d] 更新日志序列%v\n", rf.me, rf.CurrentTerm, rf.Log)
+			DPrintf("%d[%d] 更新日志序列%d \n", rf.me, rf.CurrentTerm, len(rf.Log))
 		}
 		rf.TryApply(false, args.LeaderCommit)
 	} else {
 		//DPrintf("%d 收到来自 %d 的心跳包消息\n", rf.me, args.LeaderId)
 		reply.Success = true
-		DPrintf("收到心跳包，LeaderCommitIndex: %d，自身CommitIndex: %d, lastIndex: %d",
-			args.LeaderCommit, rf.CommitIndex, rf.GetLastIndex())
-		//if args.LeaderCommit > rf.CommitIndex {
-		//	if args.PrevLogIndex > rf.GetLastIndex() {
-		//		DPrintf("%d[%d] 日志缺少PreLogIndex位置记录\n", rf.me, rf.CurrentTerm)
-		//		reply.Success = false
-		//		return
-		//	} else if rf.Log[args.PrevLogIndex].Term != args.PrevLogTerm {
-		//		DPrintf("%d[%d] 日志PreLogIndex位置记录任期与PrevLogTerm不符\n", rf.me, rf.CurrentTerm)
-		//		rf.SliceLog(false, args.PrevLogIndex)
-		//		reply.Success = false
-		//		return
-		//	} else if rf.GetLastIndex() < args.LeaderCommit {
-		//		DPrintf("%d[%d] 日志LeaderCommit位置超过本地存储日志长度\n", rf.me, rf.CurrentTerm)
-		//		reply.Success = false
-		//		return
-		//	}
-		//	rf.TryApply(false, args.LeaderCommit)
-		//}
+		//DPrintf("收到心跳包，LeaderCommitIndex: %d，自身CommitIndex: %d, lastIndex: %d",
+		//	args.LeaderCommit, rf.CommitIndex, rf.GetLastIndex())
+		if args.PrevLogIndex > rf.GetLastIndex() {
+			DPrintf("%d[%d] 日志缺少PreLogIndex位置记录\n", rf.me, rf.CurrentTerm)
+			reply.Success = false
+			return
+		} else if rf.Log[args.PrevLogIndex].Term != args.PrevLogTerm {
+			DPrintf("%d[%d] 日志PreLogIndex位置记录任期与PrevLogTerm不符\n", rf.me, rf.CurrentTerm)
+			rf.SliceLog(false, args.PrevLogIndex)
+			reply.Success = false
+			return
+		} else if rf.GetLastIndex() < args.LeaderCommit {
+			DPrintf("%d[%d] 日志LeaderCommit位置超过本地存储日志长度\n", rf.me, rf.CurrentTerm)
+			reply.Success = false
+			return
+		}
+		rf.TryApply(false, args.LeaderCommit)
 	}
 
 }
@@ -509,8 +512,8 @@ func (rf *Raft) ResetRunVoteTicker() {
 	if rf.Ticker == nil {
 		rf.Ticker = time.NewTicker(999999)
 	}
-	rand.Seed(time.Now().Unix())
-	duration := time.Duration(int(time.Millisecond) * (1 + rf.me) * Diff_Duration_Server)
+	rand.Seed(time.Now().UnixNano())
+	duration := time.Duration(int(time.Millisecond) * (1 + rand.Intn(len(rf.peers))) * Diff_Duration_Server)
 	rf.Ticker.Stop()
 	rf.Ticker.Reset(duration)
 }
@@ -548,6 +551,8 @@ func (rf *Raft) SendRequestVoteALl() bool {
 			if success {
 				return true
 			}
+		} else if reply.Term > rf.CurrentTerm {
+			return false
 		}
 	}
 	return false
@@ -636,7 +641,7 @@ func (rf *Raft) LogPatch(server int, tmpRf *Raft, c chan AppendEntriesReply, ins
 //
 // 发送给所有的非己节点发送一样的包
 //
-func (rf *Raft) Heartbeat2() bool {
+func (rf *Raft) Heartbeat() bool {
 	c := make(chan AppendEntriesReply)
 	tmpRf := rf.GetDeepCopy()
 	insertIndex := tmpRf.GetLastIndex()
@@ -662,13 +667,7 @@ func (rf *Raft) Heartbeat2() bool {
 			case <-time.After(time.Millisecond * 200):
 				break
 			default:
-				if id == 1 {
-					DPrintf("%d[%d] 发送Heartbeat包\n", rf.me, rf.CurrentTerm)
-				}
 				ok = realRf.SendAppend(id, item, &tmpReply)
-				if id == 1 {
-					DPrintf("%d[%d] 发送Heartbeat包收到 【ok: %t, success: %t, term: %d】\n", rf.me, rf.CurrentTerm, ok, tmpReply.Success, tmpReply.Term)
-				}
 			}
 			if ok && tmpReply.Success {
 				c <- tmpReply
@@ -701,11 +700,11 @@ func (rf *Raft) Heartbeat2() bool {
 			if !reply.Success {
 				// 当任期失效时，才会出现这个情况
 				hasDown = true
-				maxTermHasSeen = int(math.Min(float64(maxTermHasSeen), float64(reply.Term)))
+				maxTermHasSeen = int(math.Max(float64(maxTermHasSeen), float64(reply.Term)))
 				rf.ResetRunVoteTicker()
 			}
 			break
-		case <-time.After(time.Millisecond * 200):
+		case <-time.After(time.Millisecond * 100):
 			if hasDown && rf.Role == LEADER {
 				// 如果没有一半节点接受且已经出现别的节点任期比自己大的情况，退位
 				rf.mu.Lock()
@@ -714,6 +713,7 @@ func (rf *Raft) Heartbeat2() bool {
 				if rf.LeaderTicker != nil {
 					rf.LeaderTicker.Stop()
 				}
+				rf.ResetRunVoteTicker()
 				rf.mu.Unlock()
 				return false
 			}
@@ -724,7 +724,7 @@ func (rf *Raft) Heartbeat2() bool {
 	return true
 }
 
-func (rf *Raft) Heartbeat() bool {
+func (rf *Raft) Heartbeat2() bool {
 	rf.mu.Lock()
 	tmpRf := rf.GetDeepCopy()
 	rf.mu.Unlock()
@@ -733,14 +733,36 @@ func (rf *Raft) Heartbeat() bool {
 		LeaderId:     rf.me,
 		LeaderCommit: rf.CommitIndex,
 	}
+	r := make(chan AppendEntriesReply)
 
 	//DPrintf("%d 发送心跳包", rf.me)
 	for id, _ := range rf.peers {
 		if id != rf.me {
-			go func(realRf *Raft, id int, tmpRf *Raft) {
+			go func(realRf *Raft, id int, tmpRf *Raft, c *chan AppendEntriesReply) {
 				reply := AppendEntriesReply{}
-				rf.SendAppend(id, item, &reply)
-			}(rf, id, &tmpRf)
+				ok := false
+				select {
+				case <-time.After(time.Millisecond * 200):
+					break
+				default:
+					ok = rf.SendAppend(id, item, &reply)
+				}
+				if ok {
+					*c <- reply
+				}
+				return
+			}(rf, id, &tmpRf, &r)
+		}
+	}
+
+	for i := 0; i < len(rf.peers)-1; i++ {
+		select {
+		case reply := <-r:
+			if reply.Term > tmpRf.CurrentTerm {
+				return false
+			}
+		case <-time.After(time.Millisecond * 200):
+			return true
 		}
 	}
 	return true
@@ -830,25 +852,27 @@ func (rf *Raft) PrepareCommit(singleLog Log) int {
 					//close(c)
 					return insertIndex
 				}
-			} else {
+			} else if reply.Term > tmpRf.CurrentTerm {
 				// 当任期失效时，才会出现这个情况
 				hasDown = true
-				maxTermHasSeen = int(math.Min(float64(maxTermHasSeen), float64(reply.Term)))
+				maxTermHasSeen = int(math.Max(float64(maxTermHasSeen), float64(reply.Term)))
 				rf.ResetRunVoteTicker() // TODO: 应该可以不要这个
 			}
 			break
-		case <-time.After(time.Millisecond * 300):
-			DPrintf("%d[%d] 发送Append[%d]超时，未满一半节点接受", tmpRf.me, tmpRf.CurrentTerm, singleLog.Command)
+		case <-time.After(time.Millisecond * 100):
 			if hasDown && rf.Role == LEADER {
 				// 如果没有一半节点接受且已经出现别的节点任期比自己大的情况，退位
+				DPrintf("%d[%d] 发送Append[%d]超时，未满一半节点接受，并且出现节点任期比自己大的情况，退位", tmpRf.me, tmpRf.CurrentTerm, singleLog.Command)
 				rf.mu.Lock()
 				rf.Role = FOLLOWER
 				rf.CurrentTerm = maxTermHasSeen
+				rf.ResetRunVoteTicker()
 				if rf.LeaderTicker != nil {
 					rf.LeaderTicker.Stop()
 				}
 				rf.mu.Unlock()
 			}
+			DPrintf("%d[%d] 发送Append[%d]超时，未满一半节点接受", tmpRf.me, tmpRf.CurrentTerm, singleLog.Command)
 			//close(c)
 			return insertIndex
 		}
@@ -881,14 +905,14 @@ func (rf *Raft) Lead() {
 	}
 }
 
-func (rf *Raft) RunVote(ctx context.Context, ticker *time.Ticker) bool {
+func (rf *Raft) RunVote(ctx *context.Context, tickerCtx *context.Context) bool {
 	tmpRf := rf.GetDeepCopy()
 	select {
-	case <-ctx.Done():
-		DPrintf("%d[%d] 中途停止竞选\n", rf.me, rf.CurrentTerm)
+	case <-(*ctx).Done():
+		DPrintf("%d[%d] 中途停止竞选\n", rf.me, rf.CurrentTerm) // 这里监听消息响应操作的cancel
 		break
-	case <-ticker.C:
-		DPrintf("%d[%d] 时间超时，中途停止竞选\n", rf.me, rf.CurrentTerm)
+	case <-(*tickerCtx).Done():
+		DPrintf("%d[%d] 时间超时，中途停止竞选\n", rf.me, rf.CurrentTerm) //这里是监听超时的cancel
 		break
 	default:
 		DPrintf("%d[%d] 开始发票\n", rf.me, rf.CurrentTerm)
@@ -931,13 +955,22 @@ func (rf *Raft) RunVote(ctx context.Context, ticker *time.Ticker) bool {
 
 func WaitForRunVote(rf *Raft) {
 	rf.ResetRunVoteTicker()
+	var tickerCtx context.Context
+	var tickerCancel context.CancelFunc
 	for {
 		<-rf.Ticker.C
+		if tickerCancel != nil {
+			tickerCancel()
+			tickerCancel = nil
+		} else {
+			tickerCtx = context.Background()
+			tickerCtx, tickerCancel = context.WithCancel(tickerCtx)
+		}
 		rf.ResetRunVoteTicker()
 		if rf.Role == LEADER {
 			continue
 		}
-		go func(rf *Raft) {
+		go func(rf *Raft, tickerCtx *context.Context) {
 			rf.CurrentTerm = rf.CurrentTerm + 1
 			DPrintf("%d[%d] 开始竞选第 %d 任，地址：%p\n", rf.me, rf.CurrentTerm, rf.CurrentTerm, rf)
 			ctx := context.Background()
@@ -947,12 +980,12 @@ func WaitForRunVote(rf *Raft) {
 			rf.mu.Unlock()
 			// DPrintf("%d[%d] 取消函数的地址：%p", rf.me, rf.CurrentTerm, rf.ctxCancelFunc)
 
-			res := rf.RunVote(ctx, rf.Ticker)
+			res := rf.RunVote(&ctx, tickerCtx)
 
 			if res {
 				rf.Lead()
 			}
-		}(rf)
+		}(rf, &tickerCtx)
 	}
 }
 

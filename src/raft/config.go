@@ -157,7 +157,7 @@ func (cfg *config) start1(i int) {
 					}
 				}
 				_, prevok := cfg.logs[i][m.Index-1]
-				fmt.Printf("%d在第%d位置接受了值%d\n", i, m.Index, m.Command)
+				//fmt.Printf("%d在第%d位置接受了值%d\n", i, m.Index, m.Command)
 				cfg.logs[i][m.Index] = v
 				cfg.mu.Unlock()
 
