@@ -25,11 +25,8 @@
     </select>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="558ac743-39b1-4d9c-ab46-81873a9bc231" name="Default" comment="暂时保存，尝试">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/raft/config.go" beforeDir="false" afterPath="$PROJECT_DIR$/src/raft/config.go" afterDir="false" />
+    <list default="true" id="558ac743-39b1-4d9c-ab46-81873a9bc231" name="Default" comment="完成！">
       <change beforePath="$PROJECT_DIR$/src/raft/raft.go" beforeDir="false" afterPath="$PROJECT_DIR$/src/raft/raft.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/raft/test_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/src/raft/test_test.go" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -250,7 +247,8 @@
   <component name="VcsManagerConfiguration">
     <MESSAGE value="Part1" />
     <MESSAGE value="Part2 FailNoAgree Concurrent Rejoin" />
-    <option name="LAST_COMMIT_MESSAGE" value="Part2 FailNoAgree Concurrent Rejoin" />
+    <MESSAGE value="完成！" />
+    <option name="LAST_COMMIT_MESSAGE" value="完成！" />
   </component>
   <component name="WindowStateProjectService">
     <state x="842" y="386" width="850" height="277" key="#Notifications" timestamp="1607947203153">
@@ -277,10 +275,11 @@
       <screen x="0" y="0" width="1920" height="1050" />
     </state>
     <state x="656" y="148" key="#go_build_raft.go/0.0.1920.1050@0.0.1920.1050" timestamp="1608038605198" />
-    <state x="558" y="89" key="CommitChangelistDialog2" timestamp="1608183610997">
-      <screen x="0" y="0" width="1920" height="1050" />
+    <state x="744" y="119" key="CommitChangelistDialog2" timestamp="1608785728450">
+      <screen x="0" y="0" width="2560" height="1409" />
     </state>
     <state x="558" y="89" key="CommitChangelistDialog2/0.0.1920.1050@0.0.1920.1050" timestamp="1608183610997" />
+    <state x="744" y="119" key="CommitChangelistDialog2/0.0.2560.1409@0.0.2560.1409" timestamp="1608785728450" />
     <state x="100" y="92" width="1256" height="865" key="DiffContextDialog" timestamp="1608516032966">
       <screen x="0" y="0" width="1440" height="1049" />
     </state>
@@ -313,10 +312,11 @@
       <screen x="0" y="0" width="2560" height="1409" />
     </state>
     <state x="93" y="93" width="2375" height="1224" key="VCS.FileHistoryDialog/3840.662.1920.1034/-1920.663.1920.1050/0.0.2560.1409@0.0.2560.1409" timestamp="1608637522109" />
-    <state x="552" y="257" key="Vcs.Push.Dialog.v2" timestamp="1608183614118">
-      <screen x="0" y="0" width="1920" height="1050" />
+    <state x="736" y="345" key="Vcs.Push.Dialog.v2" timestamp="1608785733350">
+      <screen x="0" y="0" width="2560" height="1409" />
     </state>
     <state x="552" y="257" key="Vcs.Push.Dialog.v2/0.0.1920.1050@0.0.1920.1050" timestamp="1608183614118" />
+    <state x="736" y="345" key="Vcs.Push.Dialog.v2/0.0.2560.1409@0.0.2560.1409" timestamp="1608785733350" />
     <state x="115" y="107" width="2315" height="1163" key="com.intellij.history.integration.ui.views.FileHistoryDialog" timestamp="1608637467593">
       <screen x="0" y="0" width="2560" height="1409" />
     </state>

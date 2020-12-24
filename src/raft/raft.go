@@ -724,50 +724,6 @@ func (rf *Raft) Heartbeat() bool {
 	return true
 }
 
-func (rf *Raft) Heartbeat2() bool {
-	rf.mu.Lock()
-	tmpRf := rf.GetDeepCopy()
-	rf.mu.Unlock()
-	item := AppendEntriesArgs{
-		Term:         rf.CurrentTerm,
-		LeaderId:     rf.me,
-		LeaderCommit: rf.CommitIndex,
-	}
-	r := make(chan AppendEntriesReply)
-
-	//DPrintf("%d 发送心跳包", rf.me)
-	for id, _ := range rf.peers {
-		if id != rf.me {
-			go func(realRf *Raft, id int, tmpRf *Raft, c *chan AppendEntriesReply) {
-				reply := AppendEntriesReply{}
-				ok := false
-				select {
-				case <-time.After(time.Millisecond * 200):
-					break
-				default:
-					ok = rf.SendAppend(id, item, &reply)
-				}
-				if ok {
-					*c <- reply
-				}
-				return
-			}(rf, id, &tmpRf, &r)
-		}
-	}
-
-	for i := 0; i < len(rf.peers)-1; i++ {
-		select {
-		case reply := <-r:
-			if reply.Term > tmpRf.CurrentTerm {
-				return false
-			}
-		case <-time.After(time.Millisecond * 200):
-			return true
-		}
-	}
-	return true
-}
-
 //
 // 向Followers发送日志添加的请求，如果超过半数接受，则commit
 //
